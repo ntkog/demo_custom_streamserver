@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="initial-scale=1,maximum-scale=1,user-scalable=no"
+    />
+    <title>Simple update location from API results</title>
+    <style>
+      html,
+      body,
+      #viewDiv {
+        padding: 0;
+        margin: 0;
+        height: 100%;
+        width: 100%;
+      }
+      #mainWindow {
+        padding: 0.5em;
+        background-color: #fff;
+      }
+      #mainWindow p,
+      #uploadForm {
+        display: block;
+        padding: 0.1em;
+      }
+    </style>
+
+    <link
+      rel="stylesheet"
+      href="https://js.arcgis.com/4.11/esri/themes/light/main.css"
+    />
+    <script src="https://js.arcgis.com/4.11/"></script>
+
+    <script>
+      require([
+        "esri/Map",
+        "esri/views/MapView",
+        "esri/layers/FeatureLayer",
+        "esri/PopupTemplate",
+        "esri/Graphic",
+        "esri/renderers/smartMapping/creators/type"
+      ], function(
+        Map,
+        MapView,
+        FeatureLayer,
+        PopupTemplate,
+        Graphic,
+        typeRendererCreator
+      ) {
+        var map = new Map({
+          basemap: "dark-gray-vector"
+        });
+
+        var view = new MapView({
+          center: [-4.4741536666667,36.7138665],
+          zoom: 12,
+          map: map,
+          container: "viewDiv"
+        });
+
+        const labelClass = {
+          // autocasts as new LabelClass()
+          symbol: {
+            type: "text", // autocasts as new TextSymbol()
+            color: "black",
+            haloColor: "white",
+            haloSize: "3px",
+            font: {
+              // autocast as new Font()
+              size: 10,
+              weight: "bold"
+            }
+          },
+          labelPlacement: "above-center",
+          labelExpressionInfo: {
+            expression: `$feature.codLinea + "-" + $feature.codBus`
+          }
+        };
+
+        var markerSymbol = {
+          type: "simple-marker", // autocasts as new SimpleMarkerSymbol()
+          color: [226, 119, 40],
+          outline: {
+            // autocasts as new SimpleLineSymbol()
+            color: [255, 255, 255],
+            width: 2
+          }
+        };
+
+
+        var popupTemplate = new PopupTemplate({
+          title: "Tracking Position",
+          content: "{*}"
+        });
+
+        var last_batch;
+        var layer = new FeatureLayer({
+          source : [],
+          labelingInfo : [labelClass],
+          fields: [
+            { "name": "lat", "type": "double" },
+            { "name": "lon", "type": "double" },
+            { "name": "codLinea", "type": "integer" },
+            { "name": "codBus", "type": "integer" },
+            { "name": "sentido", "type": "string" },
+            { "name": "codParIni", "type": "string" },
+            { "name": "last_update", "type": "string" },
+            { "name": "ObjectID", "type": "integer" }
+          ],
+          popupTemplate : popupTemplate,
+          spatialReference: { wkid : 102100},
+          objectIdField : "ObjectID",
+          geometryType : "point"
+        });
+
+        map.add(layer);
+
+        var once = false;
+        function graphicFromData(obj) {
+          let point = {
+            type : "point",
+            x : obj.lon,
+            y : obj.lat
+          };
+          let position = new Graphic({
+            geometry: point,
+            attributes : obj
+          });
+
+          return position;
+        }
+
+        function updateLayer(graphics) {
+          let edits = !once
+              ? { addFeatures : graphics }
+              : { deleteFeatures : last_batch, addFeatures : graphics };
+          layer.applyEdits(edits)
+            .then((results) => {
+              if(!edits.hasOwnProperty("deleteFeatures")) {
+                typeRendererCreator.createRenderer({
+                  layer: layer,
+                  view: view,
+                  field: "codLinea",
+                  symbolType : '2d'
+                })
+                .then(function(response){
+                    layer.renderer = response.renderer;
+                    console.log(response);
+                    window.renderer = response;
+                });
+              }
+            })
+            .catch((err) => console.log(err));
+        };
+
+        view.when(() => {
+          window.empty = true;
+          const socket = new WebSocket('ws://localhost:8001');
+          socket.addEventListener('message', function (event) {
+
+            let updates = JSON.parse(event.data);
+            let graphicsArr = updates.map(obj => graphicFromData(obj));
+            updateLayer(graphicsArr);
+            last_batch = graphicsArr;
+            once = true;
+          });
+        })
+
+
+      });
+    </script>
+  </head>
+
+  <body>
+    <div id="viewDiv"></div>
+  </body>
+</html>
